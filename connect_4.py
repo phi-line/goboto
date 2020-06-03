@@ -1,12 +1,25 @@
 import os
+import sys
 import random
 import asyncio
 import sqlite3
+import logging
 from collections import defaultdict
 
 import discord
 from faker import Faker
 from emoji import UNICODE_EMOJI
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(logging.INFO)
+
+formatter = logging.Formatter("%(asctime)s - %(message)s")
+handler.setFormatter(formatter)
+
+logger.addHandler(handler)
 
 DISCORD_API_KEY = os.environ.get("DISCORD_API_KEY")
 client = discord.Client()
@@ -14,6 +27,14 @@ client = discord.Client()
 class database():
     def __init__(self):
         self.conn = sqlite3.connect('db.sqlite3')
+        c = self.conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS players (
+                        id TEXT,
+                        emoji TEXT,
+                        color BLOB
+                    )''')
+
+        self.conn.commit()
 
     def insert_bulk(self, players):
         for player_id in players:
@@ -252,7 +273,7 @@ class connect4():
 
 @client.event
 async def on_ready():
-    print('We have logged in as {0.user}'.format(client))
+    logger.info(f'We have logged in as {client.user}')
 
 @client.event
 async def on_message(message):
