@@ -1,4 +1,4 @@
-discord==1.0.1
-discord.py==1.3.3
+discord
+discord.py
 emoji==0.5.4
 Faker==4.1.0
