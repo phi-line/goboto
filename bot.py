@@ -6,7 +6,7 @@ import sqlite3
 import logging
 from collections import defaultdict
 
-from games import connect4
+from games import connect4, waveRPG
 
 import discord
 from faker import Faker
@@ -138,7 +138,7 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    if message.content.startswith('$c4'):
+    if message.content == '' and message.mentions and message.mentions[0]:
         await message.channel.send('beep boop... human wtf why did you turn me on')
 
     if message.content.startswith('$challenge') or message.content.startswith('$c'):
@@ -152,6 +152,9 @@ async def on_message(message):
             await sessions.remove_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0])
         else:
             await message.channel.send(f"you need to mention someone to resign from a match")
+
+    if message.content.startswith('$wave') or message.content.startswith('$w') or message.content.startswith('$rpg'):
+        await sessions.add_session(channel=message.channel, primary=message.author, tertiary=client.user, application=waveRPG)
 
     if message.content.startswith('$emoji') or message.content.startswith('$e'):
         emoji = message.content.split('$emoji ')
