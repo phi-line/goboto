@@ -1,9 +1,13 @@
+import copy
+import time
+from operator import attrgetter
+
 import discord
 
 class waveRPG():
     BOARD_X = 4
     BOARD_Y = 7
-    BUTTONS = {'1️⃣':0,'2️⃣':1,'3️⃣':2,'4️⃣':3}
+    BUTTONS = {'1️⃣':0,'2️⃣':1,'3️⃣':2,'4️⃣':3,'⌛':4}
     WINNER_BUTTONS = {'🎉':0,'🇺':1,'🎊':2,'🇼':3,'🇴':5,'🇳':6,'🍾':7}
     BLANK_TILE = "➕"
     PRIMARY_TILE = "🟠"
@@ -24,7 +28,7 @@ class waveRPG():
 
         self.current_level = 0
         self.levels = {
-            0: [bug(0,0)]
+            0: {(0,0):bug(0,0)}
         }
         self.board = [[None,None,None,None],
                       [None,None,None,None],
@@ -33,7 +37,7 @@ class waveRPG():
                       [None,None,None,None],
                       [None,None,None,None],
                       [None,None,None,None]]
-        self.init_board(self.levels[self.current_level])
+        self.tile_state = self.init_board()
 
     def is_completed(self):
         return True if self.winner else False
@@ -41,22 +45,33 @@ class waveRPG():
     def detect_current_player_win(self):
         return False
 
-    def init_board(self, level):
-        for tile in level:
-            self.board[tile.x][tile.y] = tile
+    def init_board(self):
+        return copy.deepcopy(self.levels[self.current_level])
 
     async def play_move(self, payload):
         await self.message.remove_reaction(payload.emoji, payload.member)
-        col = self.BUTTONS[payload.emoji.name]
+        input_x = self.BUTTONS[payload.emoji.name]
 
-        if not self.board[self.BOARD_Y - 1][col]:
-            # move all active tiles
-        
-            self.board[self.BOARD_Y - 1][col] = pawn(x=col, y=self.BOARD_Y - 1, icon=self.get_player_emoji())
+        # sort by speed
+        priority = list(self.tile_state.values())
+        priority = sorted(priority, key=attrgetter('speed', 'y'), reverse=True)
+        current_coordinates = [(x.x, x.y) for x in priority]
 
-            return True
-        else:
-            return False
+        print(priority)
+        print([attrgetter('speed', 'y')(x) for x in priority])
+
+        for x,y in current_coordinates:
+            copy.deepcopy(self.tile_state[(x, y)]).advance(self.tile_state)
+    
+        if input_x != 4: # wait command
+            self.tile_state[(input_x, self.BOARD_Y - 1)] = pawn(
+                x=input_x,
+                y=self.BOARD_Y - 1,
+                icon=self.get_player_emoji()
+            )
+        await self.render_message()
+
+        return True
     
     async def render_message(self):
         if not self.winner:
@@ -83,15 +98,15 @@ class waveRPG():
 
     def render_board(self):
         ret = ""
-        for y in self.board:
-            for tile in y:
-                if tile:
-                    ret += f"{tile.icon}\t\t"
+        for y, row in enumerate(self.board):
+            for x, tile in enumerate(row):
+                if (x,y) in self.tile_state:
+                    ret += f"{self.tile_state[(x,y)].icon}\t\t"
                 else:
                     ret += f"{self.BLANK_TILE}\t\t"
             ret += "\n\n\n"
         if not self.winner:
-            ret += '\t\t'.join(self.BUTTONS.keys())
+            ret += '\t\t'.join(list(self.BUTTONS.keys())[:-1])
         else:
             ret += '\t\t'.join(self.WINNER_BUTTONS.keys())
         return ret
@@ -106,26 +121,60 @@ class waveRPG():
 
 
 class unit():
-    def __init__(self, x, y, icon="🚫"):
-        self.icon = icon
+    def __init__(self, x, y, speed, icon):
         self.x = x
         self.y = y
+        self.speed = speed
+        self.icon = icon
     
-    def __next__(self):
-        pass
+    def advance(self, tile_state):
+        tile_state[(self.x,self.y)] = self
 
 
-class pawn(unit):
-    def __init__(self, x, y, icon="🦠"):
-        super().__init__(x, y, icon)
-
-    def __next__(self):
-        self.y -= 1
+class monster(unit):
+    def __init__(self, x, y, speed, icon="🃏"):
+        super().__init__(x=x, y=y, speed=speed, icon=icon)
 
 
-class bug(unit):
-    def __init__(self, x, y, icon="🐛"):
-        super().__init__(x, y, icon)
+class player(unit):
+    def __init__(self, x, y, speed, icon="🀄"):
+        super().__init__(x=x, y=y, speed=speed, icon=icon)
 
-    def __next__(self):
-        self.y += 1
+
+class pawn(player):
+    def __init__(self, x, y, speed=1, icon="🐦"):
+        super().__init__(x=x, y=y, speed=speed, icon=icon)
+
+    def advance(self, tile_state):
+        if (self.x,self.y) in tile_state:
+            del tile_state[(self.x,self.y)]
+            if (self.x - 1,self.y - 1) in tile_state and is_monster(self.x - 1, self.y - 1, tile_state):
+                del tile_state[(self.x - 1,self.y - 1)]
+                self.x -= 1
+                self.y -= 1
+            elif (self.x + 1,self.y - 1) in tile_state and is_monster(self.x + 1, self.y - 1, tile_state):
+                del tile_state[(self.x + 1,self.y - 1)]
+                self.x += 1
+                self.y -= 1
+            elif (self.x,self.y-1) not in tile_state:
+                self.y -= 1
+            tile_state[(self.x,self.y)] = self
+
+
+class bug(monster):
+    def __init__(self, x, y, speed=-1, icon="🐛"):
+        super().__init__(x=x, y=y, speed=speed, icon=icon)
+
+    def advance(self, tile_state):
+        if (self.x,self.y) in tile_state:
+            del tile_state[(self.x,self.y)]
+            self.y += 1
+            tile_state[(self.x,self.y)] = self
+
+
+def is_monster(x, y, tile_state):
+    return (x, y) in tile_state and isinstance(tile_state[(x, y)], monster)
+
+
+def is_player(x, y, tile_state):
+    return (x, y) in tile_state and isinstance(tile_state[(x, y)], player)
