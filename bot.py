@@ -6,7 +6,7 @@ import sqlite3
 import logging
 from collections import defaultdict
 
-from games import connect4, waveRPG
+from games import connect4, waveRPG, go
 
 import discord
 from faker import Faker
@@ -85,14 +85,22 @@ class sessions():
         session_id = sessions.generate_session_id(primary, tertiary)
         if not self.get_session(session_id):
             db.insert_bulk([primary.id, tertiary.id])
-            message = await channel.send(f"{primary.name} started session between {primary.name} and {tertiary.name}")
+            message = await channel.send(f"{primary.name} booting session between {primary.name} and {tertiary.name}...")
             new_session = application(client=client, db=db,channel=channel, message=message, primary=primary, tertiary=tertiary)
+
+            sub_message = None
+            if hasattr(new_session, 'SUB_MESSAGE'):
+                sub_message = await channel.send(f"{new_session.SUB_MESSAGE}")
+                await new_session.initialize_sub_message(sub_message)
+
             await new_session.render_message()
 
             self._sessions[session_id] = new_session
-            self._messages[message.id] = session_id
             self._players[primary.id].add(session_id)
             self._players[tertiary.id].add(session_id)
+            self._messages[message.id] = session_id
+            if sub_message:
+                self._messages[sub_message.id] = session_id
             return True
         await channel.send(f"there is already a session between {primary.name} and {tertiary.name}")
         return False
@@ -141,20 +149,26 @@ async def on_message(message):
     if message.content == '' and message.mentions and message.mentions[0]:
         await message.channel.send('beep boop... human wtf why did you turn me on')
 
-    if message.content.startswith('$challenge') or message.content.startswith('$c'):
+    if message.content.startswith('$connect4') or message.content.startswith('$c4'):
         if message.mentions and message.mentions[0]:
             await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=connect4)
         else:
             await message.channel.send(f"you need to mention someone to challenge them to a match")
 
+    if message.content.startswith('$wave') or message.content.startswith('$w') or message.content.startswith('$rpg'):
+        await sessions.add_session(channel=message.channel, primary=message.author, tertiary=client.user, application=waveRPG)
+
+    if message.content.startswith('$go') or message.content.startswith('$g'):
+        if message.mentions and message.mentions[0]:
+            await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=go)
+        else:
+            await message.channel.send(f"you need to mention someone to challenge them to a match")
+    
     if message.content.startswith('$resign') or message.content.startswith('$r'):
         if message.mentions and message.mentions[0]:
             await sessions.remove_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0])
         else:
             await message.channel.send(f"you need to mention someone to resign from a match")
-
-    if message.content.startswith('$wave') or message.content.startswith('$w') or message.content.startswith('$rpg'):
-        await sessions.add_session(channel=message.channel, primary=message.author, tertiary=client.user, application=waveRPG)
 
     if message.content.startswith('$emoji') or message.content.startswith('$e'):
         emoji = message.content.split('$emoji ')
