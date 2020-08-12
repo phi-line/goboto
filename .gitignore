@@ -1,1 +1,3 @@
 *.sh
+*__pycache__
+*.sqlite3
