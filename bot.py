@@ -192,9 +192,10 @@ async def on_raw_reaction_add(payload):
     channel = await client.fetch_channel(payload.channel_id)
     message = await channel.fetch_message(payload.message_id)
     session = sessions.get_session_by_message(payload.message_id)
-    if not (session and session.is_player_current(payload.member) and await session.play_move(payload)):
-        await message.remove_reaction(payload.emoji, payload.member)
-    elif session.is_completed():
+    if session and session.is_player_current(payload.member):
+        if not await session.play_move(payload):
+            await message.remove_reaction(payload.emoji, payload.member)
+    elif session and session.is_completed():
         await sessions.remove_session(channel=message.channel, primary=session.primary, tertiary=session.tertiary)
 
 client.run(DISCORD_API_KEY)
