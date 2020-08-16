@@ -14,7 +14,7 @@ class go():
     BLACK_TILE = "⚫"
     WHITE_COLOR = (255,255,255)
     BLACK_COLOR = (0,0,0)
-    SUB_MESSAGE = "▘"
+    SUB_MESSAGE = "`Select a row and a column`"
 
     def __init__(self, client, db, channel, message, primary, tertiary):
         self.client = client
@@ -68,18 +68,22 @@ class go():
             # make col selection
             self.col_selection = self.BUTTONS_COL[payload.emoji.name]
             await self.sub_message.remove_reaction(payload.emoji, payload.member)
-        
+
         ret_val = False
         # only accept if player makes both a row and col selection
         if self.row_selection is not None and self.col_selection is not None:
-            await self.render_message()
-            if not self.board[self.col_selection][self.row_selection]:
-                self.board[self.col_selection][self.row_selection] = payload.member.id
-                self.last_state = copy.deepcopy((self.current_player.name, self.row_selection, self.col_selection))
+            # only accept moves that pass ruleset
+            if ruleset.validate_move(self.board, self.row_selection, self.col_selection, self.last_state):
+                await self.render_message()
+                await self.sub_message.edit(content=self.SUB_MESSAGE)
+                self.board[self.row_selection][self.col_selection] = payload.member.id
+                self.last_state = copy.deepcopy((self.current_player.id, self.row_selection, self.col_selection))
                 self.current_player = self.primary if self.is_player_current(self.tertiary) else self.tertiary
-                self.row_selection = None
-                self.col_selection = None
+            else:
+                await self.sub_message.edit(content=self.render_selection('Invalid Placement:'))
                 ret_val = True
+            self.row_selection = None
+            self.col_selection = None
         await self.render_message()
 
         return ret_val
@@ -91,7 +95,7 @@ class go():
         else:
             header = f"Congratulations, {self.winner.name}"
         container = discord.Embed(title=header, color=self.get_container_color())
-        container.add_field(name=self.render_selection(), value=self.render_board(), inline=True)
+        container.add_field(name=self.render_state('Make your placement:'), value=self.render_board(), inline=True)
         await self.message.edit(content=f"{self.primary.mention} ⚔️ {self.tertiary.mention}", embed=container)
 
     def is_player_current(self, player):
@@ -133,10 +137,13 @@ class go():
         ret += "\n```"
         return ret
 
-    def render_selection(self):
+    def render_state(self, message):
+        return f"{self.render_last_selection()}{self.render_selection(message)}"
+
+    def render_selection(self, message):
         row = list(self.BUTTONS_ROW.keys())[self.row_selection] if self.row_selection is not None else "\t\t"
         col = list(self.BUTTONS_COL.keys())[self.col_selection] if self.col_selection is not None else "\t\t"
-        return f"{self.render_last_selection()}`Make your placement:`\t{row}\t{col}"
+        return f"`{message}`\t{row}\t{col}"
     
     def render_last_selection(self):
         if self.last_state:
@@ -156,3 +163,27 @@ class go():
         elif self.winner:
             await self.message.clear_reactions()
             await self.sub_message.clear_reactions()
+
+class ruleset():
+    @staticmethod
+    def validate_move(board, row, col, last_state):
+        print(f"{row}, {col}, {last_state}")
+        return ruleset.not_placed_on_occupied_space(board, row, col) and \
+               ruleset.not_placed_on_previously_played_space(row, col, last_state) and \
+               ruleset.not_sacrifice
+
+    @staticmethod
+    def not_placed_on_occupied_space(board, row, col):
+        return not board[col][row]
+    
+    @staticmethod
+    def not_placed_on_previously_played_space(row, col, last_state):
+        return (row, col) != (last_state[1], last_state[2]) if last_state else True
+
+    @staticmethod
+    def not_sacrifice(board, row, col, last_row, last_col):
+        return True
+
+    @staticmethod
+    def end_game(current_pass, last_pass_state):
+        return current_pass and last_pass_state

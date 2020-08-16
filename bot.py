@@ -146,32 +146,32 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    if message.content == '' and message.mentions and message.mentions[0]:
+    if message.content == '' and message.mentions and message.mentions[0] == client.user:
         await message.channel.send('beep boop... human wtf why did you turn me on')
 
-    if message.content.startswith('$connect4') or message.content.startswith('$c4'):
+    if message.content.startswith('>connect4'):
         if message.mentions and message.mentions[0]:
             await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=connect4)
         else:
             await message.channel.send(f"you need to mention someone to challenge them to a match")
 
-    if message.content.startswith('$wave') or message.content.startswith('$w') or message.content.startswith('$rpg'):
+    if message.content.startswith('>wave'):
         await sessions.add_session(channel=message.channel, primary=message.author, tertiary=client.user, application=waveRPG)
 
-    if message.content.startswith('$go') or message.content.startswith('$g'):
+    if message.content.startswith('>go'):
         if message.mentions and message.mentions[0]:
             await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=go)
         else:
             await message.channel.send(f"you need to mention someone to challenge them to a match")
     
-    if message.content.startswith('$resign') or message.content.startswith('$r'):
+    if message.content.startswith('>resign'):
         if message.mentions and message.mentions[0]:
             await sessions.remove_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0])
         else:
             await message.channel.send(f"you need to mention someone to resign from a match")
 
-    if message.content.startswith('$emoji') or message.content.startswith('$e'):
-        emoji = message.content.split('$emoji ')
+    if message.content.startswith('>emoji'):
+        emoji = message.content.split('>emoji ')
         if len(emoji) != 2 or emoji[1] not in UNICODE_EMOJI:
             await message.channel.send(f"invalid emoji")
             return
@@ -179,6 +179,15 @@ async def on_message(message):
 
         db.insert_player(message.author.id)
         db.update_player_emoji(message.author.id, emoji)
+        games = sessions.get_session_by_player(message.author.id)
+        if games:
+            for board in games:
+                await board.render_message()
+
+    if message.content.startswith('>rm emoji'):
+        db.insert_player(message.author.id)
+        db.update_player_emoji(message.author.id, None)
+        await message.channel.send(f"unset emoji")
         games = sessions.get_session_by_player(message.author.id)
         if games:
             for board in games:
