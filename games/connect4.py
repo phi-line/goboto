@@ -28,6 +28,7 @@ class connect4():
         self.current_player = random.choice([self.primary, self.tertiary]) if self.tertiary != self.client.user else self.primary
         self.has_buttons = False
         self.winner = None
+        self.lock = False
 
     def is_completed(self):
         return True if self.winner else False

@@ -155,8 +155,8 @@ async def on_message(message):
         else:
             await message.channel.send(f"you need to mention someone to challenge them to a match")
 
-    if message.content.startswith('>wave'):
-        await sessions.add_session(channel=message.channel, primary=message.author, tertiary=client.user, application=waveRPG)
+    # if message.content.startswith('>wave'):
+    #     await sessions.add_session(channel=message.channel, primary=message.author, tertiary=client.user, application=waveRPG)
 
     if message.content.startswith('>go'):
         if message.mentions and message.mentions[0]:
@@ -198,13 +198,22 @@ async def on_raw_reaction_add(payload):
     if payload.member == client.user:
         return
 
-    channel = await client.fetch_channel(payload.channel_id)
-    message = await channel.fetch_message(payload.message_id)
+    try:
+        channel = await client.fetch_channel(payload.channel_id)
+        message = await channel.fetch_message(payload.message_id)
+    except discord.errors.NotFound:
+        return
+
     session = sessions.get_session_by_message(payload.message_id)
-    if session and session.is_player_current(payload.member):
-        if not await session.play_move(payload):
-            await message.remove_reaction(payload.emoji, payload.member)
-    elif session and session.is_completed():
-        await sessions.remove_session(channel=message.channel, primary=session.primary, tertiary=session.tertiary)
+
+    if session:
+        if not session.lock and session.is_player_current(payload.member):
+            await session.play_move(payload)
+        elif session.is_completed():
+            await sessions.remove_session(channel=message.channel, primary=session.primary, tertiary=session.tertiary)
+
+        await session.message.remove_reaction(payload.emoji, payload.member)
+        if session.sub_message:
+            await session.sub_message.remove_reaction(payload.emoji, payload.member)
 
 client.run(DISCORD_API_KEY)

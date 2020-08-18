@@ -38,6 +38,7 @@ class waveRPG():
                       [None,None,None,None],
                       [None,None,None,None]]
         self.tile_state = self.init_board()
+        self.lock = False
 
     def is_completed(self):
         return True if self.winner else False
