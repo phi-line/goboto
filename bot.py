@@ -195,6 +195,7 @@ async def on_message(message):
         if games:
             for board in games:
                 await board.simulate()
+        await sessions.remove_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0])
 
     if message.content.startswith('>emoji'):
         emoji = message.content.split('>emoji ')

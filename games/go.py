@@ -89,24 +89,31 @@ class go():
                 row=self.row_selection,
                 col=self.col_selection
             )
+            captures = []
             try:
                 # only accept moves that pass ruleset
                 ruleset.validate_placement(self.board, self.current_player, self.row_selection, self.col_selection, self.last_state)
                 self.board[self.row_selection][self.col_selection] = placement
-                ruleset.resolve_placement(self.board, self.other_player, placement)
+                captures = ruleset.find_captures(
+                    board=self.board,
+                    owner=self.current_player,
+                    root=placement
+                )
+
+                if not captures:
+                    ruleset.validate_sacrifice(self.board, self.other_player, placement)
             except placementValidationError:
                 # reset placement if not validated
                 self.board[self.row_selection][self.col_selection] = temp_stone
                 await self.sub_message.edit(content=self.render_selection('Invalid Placement:'))
             else:
-                await self.render_message()
                 await self.sub_message.edit(content=self.SUB_MESSAGE)
 
                 ruleset.resolve_captures(
                     board=self.board,
-                    owner=self.current_player,
-                    root=placement
+                    captures=captures
                 )
+                await self.render_message()
                 self.last_state = copy.deepcopy((self.current_player.id, self.row_selection, self.col_selection))
                 self.current_player = self.primary if self.is_player_current(self.tertiary) else self.tertiary
             finally:
@@ -114,7 +121,7 @@ class go():
                 self.col_selection = None
 
         self.lock = False
-        await self.render_message()
+        not self.mock and await self.render_message()
 
     def get_board_tile(self, row, col):
         if row < 0 or row >= self.BOARD_Y or col < 0 or col >= self.BOARD_X:
@@ -123,8 +130,7 @@ class go():
             return self.board[row][col]
 
     async def render_message(self):
-        if not self.mock:
-            await self.refresh_buttons()
+        not self.mock and await self.refresh_buttons()
         if not self.winner:
             header = f"It's your move, {self.current_player.name}."
         else:
@@ -210,6 +216,8 @@ class go():
             )
         )
 
+        await asyncio.sleep(.5)
+
         await self.play_move(
             payload=FakePayload(
                 message_id=self.sub_message.id,
@@ -220,16 +228,66 @@ class go():
             )
         )
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(.5)
 
     async def simulate(self):
-        await self.simulate_move(5,3,self.primary)
-        await self.simulate_move(6,3,self.tertiary)
+        # test capture
+        # await self.simulate_move(0,3,self.primary)
+        # await self.simulate_move(0,2,self.tertiary)
+        # await self.simulate_move(1,3,self.primary)
+        # await self.simulate_move(1,2,self.tertiary)
+        # await self.simulate_move(2,4,self.primary)
+        # await self.simulate_move(0,4,self.tertiary)
+        # await self.simulate_move(4,3,self.primary)
+        # await self.simulate_move(1,4,self.tertiary)
+        # await self.simulate_move(2,2,self.primary)
+        # await self.simulate_move(2,3,self.tertiary)
+
+        # test sacrifice
+        # await self.simulate_move(0,0,self.primary)
+        # await self.simulate_move(0,3,self.tertiary)
+        # await self.simulate_move(0,1,self.primary)
+        # await self.simulate_move(1,2,self.tertiary)
+        # await self.simulate_move(0,2,self.primary)
+        # await self.simulate_move(1,4,self.tertiary)
+        # await self.simulate_move(0,3,self.primary)
+        # await self.simulate_move(2,3,self.tertiary)
+        # await self.simulate_move(1,3,self.primary)
+
+        # test occupied
+        # await self.simulate_move(5,5,self.primary)
+        # await self.simulate_move(5,5,self.tertiary)
+        # await self.simulate_move(5,3,self.tertiary)
+        # await self.simulate_move(3,3,self.primary)
+        # await self.simulate_move(5,5,self.tertiary)
+
+        # bug 1
+        # await self.simulate_move(5,3,self.primary)
+        # await self.simulate_move(6,3,self.tertiary)
+        # await self.simulate_move(6,4,self.primary)
+        # await self.simulate_move(7,4,self.tertiary)
+        # await self.simulate_move(6,6,self.primary)
+        # await self.simulate_move(6,5,self.tertiary)
+        # await self.simulate_move(5,6,self.primary)
+
+        # nested capture
+        await self.simulate_move(2,4,self.primary)
+        await self.simulate_move(4,5,self.tertiary)
         await self.simulate_move(6,4,self.primary)
-        await self.simulate_move(7,4,self.tertiary)
-        await self.simulate_move(6,6,self.primary)
-        await self.simulate_move(6,5,self.tertiary)
-        await self.simulate_move(5,6,self.primary)
+        await self.simulate_move(5,4,self.tertiary)
+        await self.simulate_move(4,2,self.primary)
+        await self.simulate_move(4,3,self.tertiary)
+        await self.simulate_move(4,6,self.primary)
+        await self.simulate_move(3,4,self.tertiary)
+        await self.simulate_move(3,3,self.primary)
+        await self.simulate_move(2,2,self.tertiary)
+        await self.simulate_move(3,5,self.primary)
+        await self.simulate_move(2,6,self.tertiary)
+        await self.simulate_move(5,5,self.primary)
+        await self.simulate_move(6,6,self.tertiary)
+        await self.simulate_move(5,3,self.primary)
+        await self.simulate_move(6,2,self.tertiary)
+        await self.simulate_move(4,4,self.primary)
 
 
 class tile():
@@ -306,27 +364,36 @@ class wall(tile):
         super().__init__(
             row=row,
             col=col,
-            owner=go
+            owner=None
         )
 
 
 class ruleset():
     @staticmethod
-    def resolve_captures(board, owner, root):
+    def resolve_captures(board, captures):
+        for capture in captures:
+            board[capture.row][capture.col] = tile(row=capture.row, col=capture.col)
+
+    @staticmethod
+    def find_captures(board, owner, root):
         capture_groups = []
         for dame in root.liberties:
             if isinstance(dame, stone) and dame.is_not_owned_by(owner):
                 capture_groups.append(ruleset.find_group(board, owner, dame, {dame}))
 
+        captures = []
         for capture_group in capture_groups:
             is_captured = True
             liberties = reduce(or_, [{c for c in capture.liberties} for capture in capture_group])
             for dame in liberties:
-                if isinstance(dame, tile) and dame.owner is None:
+                # check if has eye
+                if type(dame) is tile:
                     is_captured = False
+                    break
+
             if is_captured:
-                for capture in capture_group:
-                    board[capture.row][capture.col] = tile(row=capture.row, col=capture.col)
+                captures.extend(capture_group)
+        return captures
 
     @staticmethod
     def sacrificed_stone(board, other, root):       
@@ -335,9 +402,9 @@ class ruleset():
         is_captured = True
         liberties = reduce(or_, [{dame for dame in capture.liberties} for capture in capture_group])
         for dame in liberties:
-            if isinstance(dame, tile):
-                if dame.owner is None:
-                    is_captured = False
+            if type(dame) is tile:
+                is_captured = False
+                break
         return is_captured
 
     @staticmethod
@@ -355,7 +422,7 @@ class ruleset():
            raise placementValidationError
     
     @staticmethod
-    def resolve_placement(board, other, placement):
+    def validate_sacrifice(board, other, placement):
         ret = ruleset.sacrificed_stone(board, other, placement)
         print(f"sacrificed_stone - {ret}")
         if ret:
@@ -363,8 +430,8 @@ class ruleset():
 
     @staticmethod
     def placed_on_occupied_space(board, owner, row, col):
-        ret = board[col][row] and type(board[col][row].owner) is tile
-        print(f"placed_on_occupied_space - {ret}")
+        ret = board[row][col] and type(board[row][col]) is stone
+        print(f"placed_on_occupied_space - {ret} {type(board[row][col])}")
         return ret
 
     @staticmethod
@@ -390,101 +457,3 @@ def generate_hash(row, col):
 class FakePayload:
     def __init__(self, **kwds):
         self.__dict__.update(kwds)
-
-
-# test capture
-# self.board[0][3] = stone(
-#     owner=self.tertiary,
-#     state=self,
-#     row=0,
-#     col=3
-# )
-# self.board[1][3] = stone(
-#     owner=self.tertiary,
-#     state=self,
-#     row=1,
-#     col=3
-# )
-
-# self.board[0][2] = stone(
-#     owner=self.primary,
-#     state=self,
-#     row=0,
-#     col=3
-# )
-# self.board[1][2] = stone(
-#     owner=self.primary,
-#     state=self,
-#     row=1,
-#     col=3
-# )
-# self.board[0][4] = stone(
-#     owner=self.primary,
-#     state=self,
-#     row=0,
-#     col=3
-# )
-# self.board[1][4] = stone(
-#     owner=self.primary,
-#     state=self,
-#     row=1,
-#     col=3
-# )
-
-# test sacrifice
-# self.board[0][3] = stone(
-#     owner=self.tertiary,
-#     state=self,
-#     row=1,
-#     col=3
-# )
-# self.board[1][2] = stone(
-#     owner=self.tertiary,
-#     state=self,
-#     row=0,
-#     col=3
-# )
-# self.board[1][4] = stone(
-#     owner=self.tertiary,
-#     state=self,
-#     row=1,
-#     col=3
-# )
-# self.board[2][3] = stone(
-#     owner=self.tertiary,
-#     state=self,
-#     row=1,
-#     col=3
-# )
-
-# test bug 1
-# self.board[5][3] = stone(
-#     owner=self.tertiary,
-#     state=self,
-#     row=1,
-#     col=3
-# )
-# self.board[6][4] = stone(
-#     owner=self.tertiary,
-#     state=self,
-#     row=0,
-#     col=3
-# )
-# self.board[6][6] = stone(
-#     owner=self.tertiary,
-#     state=self,
-#     row=1,
-#     col=3
-# )
-# self.board[6][3] = stone(
-#     owner=self.primary,
-#     state=self,
-#     row=1,
-#     col=3
-# )
-# self.board[7][4] = stone(
-#     owner=self.primary,
-#     state=self,
-#     row=0,
-#     col=3
-# )
