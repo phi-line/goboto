@@ -6,7 +6,7 @@ import sqlite3
 import logging
 from collections import defaultdict
 
-from games import connect4, waveRPG, go
+from games import GAMES, connect4, waveRPG, go
 
 import discord
 from faker import Faker
@@ -81,12 +81,12 @@ class sessions():
         self._messages = {}
         self._players = defaultdict(set)
 
-    async def add_session(self, channel, primary, tertiary, application):
+    async def add_session(self, channel, primary, tertiary, application, mock=False):
         session_id = sessions.generate_session_id(primary, tertiary)
         if not self.get_session(session_id):
             db.insert_bulk([primary.id, tertiary.id])
             message = await channel.send(f"{primary.name} booting session between {primary.name} and {tertiary.name}...")
-            new_session = application(client=client, db=db,channel=channel, message=message, primary=primary, tertiary=tertiary)
+            new_session = application(client=client, db=db,channel=channel, message=message, primary=primary, tertiary=tertiary, mock=mock)
 
             sub_message = None
             if hasattr(new_session, 'SUB_MESSAGE'):
@@ -169,6 +169,32 @@ async def on_message(message):
             await sessions.remove_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0])
         else:
             await message.channel.send(f"you need to mention someone to resign from a match")
+
+    if message.content.startswith('>app'):
+        app = message.content.split('>app')
+        if len(app) != 2 or app[1] not in GAMES:
+            await message.channel.send(f"invalid app name")
+            return
+        if message.mentions and message.mentions[0]:
+            await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=app[1])
+        else:
+            await message.channel.send(f"you need to mention someone to challenge them to a match")
+
+    if message.content.startswith('>mock'):
+        app = message.content.split(' ')
+        print(app)
+        if len(app) < 3 or app[1] not in GAMES:
+            await message.channel.send(f"invalid app name")
+            return
+        if message.mentions and message.mentions[0]:
+            await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=GAMES.get(app[1]), mock=True)
+        else:
+            await message.channel.send(f"you need to mention someone to challenge them to a match")
+
+        games = sessions.get_session_by_player(message.author.id)
+        if games:
+            for board in games:
+                await board.simulate()
 
     if message.content.startswith('>emoji'):
         emoji = message.content.split('>emoji ')

@@ -1,3 +1,4 @@
+import asyncio
 import discord
 import random
 import string
@@ -21,7 +22,7 @@ class go():
     BLACK_COLOR = (0,0,0)
     SUB_MESSAGE = "`Select a row and a column`"
 
-    def __init__(self, client, db, channel, message, primary, tertiary):
+    def __init__(self, client, db, channel, message, primary, tertiary, mock):
         self.client = client
         self.db = db
         self.channel = channel
@@ -29,9 +30,9 @@ class go():
         self.message_map = {self.message.id: self.message}
         self.primary = primary
         self.tertiary = tertiary
+        self.mock = mock
         
-        # player_order = random.sample([self.primary, self.tertiary],2)
-        player_order = [self.primary, self.tertiary]
+        player_order = [self.primary, self.tertiary] if mock else random.sample([self.primary, self.tertiary],2)
         self.current_player = player_order[0]
         self.team_skin = {
             player_order[0].id: {
@@ -59,31 +60,6 @@ class go():
     def initialize_board(self):
         self.board = [[tile(row=row, col=col) for col in range(self.BOARD_X)] for row in range(self.BOARD_Y)]
 
-        self.board[0][3] = piece(
-            owner=self.tertiary,
-            state=self,
-            row=1,
-            col=3
-        )
-        self.board[1][2] = piece(
-            owner=self.tertiary,
-            state=self,
-            row=0,
-            col=3
-        )
-        self.board[1][4] = piece(
-            owner=self.tertiary,
-            state=self,
-            row=1,
-            col=3
-        )
-        self.board[2][3] = piece(
-            owner=self.tertiary,
-            state=self,
-            row=1,
-            col=3
-        )
-
     async def initialize_sub_message(self, message):
         self.sub_message = message
         self.message_map[self.sub_message.id] = self.sub_message
@@ -96,17 +72,18 @@ class go():
         if payload.message_id == self.message.id:
             # make row selection
             self.row_selection = self.BUTTONS_ROW[payload.emoji.name]
-            await self.message.remove_reaction(payload.emoji, payload.member)
+            not self.mock and await self.message.remove_reaction(payload.emoji, payload.member)
         elif payload.message_id == self.sub_message.id:
             # make col selection
             self.col_selection = self.BUTTONS_COL[payload.emoji.name]
-            await self.sub_message.remove_reaction(payload.emoji, payload.member)
+            not self.mock and await self.sub_message.remove_reaction(payload.emoji, payload.member)
 
         # only accept if player makes both a row and col selection
         if self.row_selection is not None and self.col_selection is not None:
-            # attempt to place. we need this piece in board state in order to perform checks
-            temp_piece = copy.deepcopy(self.board[self.row_selection][self.col_selection])
-            placement = piece(
+            # attempt to place. we need this stone in board state in order to perform checks
+            # temp_stone = copy.deepcopy(self.board[self.row_selection][self.col_selection])
+            temp_stone = copy.copy(self.board[self.row_selection][self.col_selection])
+            placement = stone(
                 owner=self.current_player,
                 state=self,
                 row=self.row_selection,
@@ -117,15 +94,15 @@ class go():
                 ruleset.validate_placement(self.board, self.current_player, self.row_selection, self.col_selection, self.last_state)
                 self.board[self.row_selection][self.col_selection] = placement
                 ruleset.resolve_placement(self.board, self.other_player, placement)
-            except placementValidationError as e:
+            except placementValidationError:
                 # reset placement if not validated
-                self.board[self.row_selection][self.col_selection] = temp_piece
+                self.board[self.row_selection][self.col_selection] = temp_stone
                 await self.sub_message.edit(content=self.render_selection('Invalid Placement:'))
             else:
                 await self.render_message()
                 await self.sub_message.edit(content=self.SUB_MESSAGE)
 
-                capture_groups = ruleset.find_captures(
+                ruleset.resolve_captures(
                     board=self.board,
                     owner=self.current_player,
                     root=placement
@@ -146,7 +123,8 @@ class go():
             return self.board[row][col]
 
     async def render_message(self):
-        await self.refresh_buttons()
+        if not self.mock:
+            await self.refresh_buttons()
         if not self.winner:
             header = f"It's your move, {self.current_player.name}."
         else:
@@ -221,6 +199,38 @@ class go():
             await self.message.clear_reactions()
             await self.sub_message.clear_reactions()
 
+    async def simulate_move(self, row, col, member):
+        await self.play_move(
+            payload=FakePayload(
+                message_id=self.message.id,
+                member=member,
+                emoji=FakePayload(
+                    name=list(self.BUTTONS_ROW.keys())[row]
+                )
+            )
+        )
+
+        await self.play_move(
+            payload=FakePayload(
+                message_id=self.sub_message.id,
+                member=member,
+                emoji=FakePayload(
+                    name=list(self.BUTTONS_COL.keys())[col]
+                )
+            )
+        )
+
+        await asyncio.sleep(1)
+
+    async def simulate(self):
+        await self.simulate_move(5,3,self.primary)
+        await self.simulate_move(6,3,self.tertiary)
+        await self.simulate_move(6,4,self.primary)
+        await self.simulate_move(7,4,self.tertiary)
+        await self.simulate_move(6,6,self.primary)
+        await self.simulate_move(6,5,self.tertiary)
+        await self.simulate_move(5,6,self.primary)
+
 
 class tile():
     def __init__(self, row, col, owner=None):
@@ -228,8 +238,19 @@ class tile():
         self.row = row
         self.col = col
 
+    def __copy__(self):
+        cls = self.__class__
+        copy = cls.__new__(cls)
+        copy.__dict__.update(self.__dict__)
+        return copy
 
-class piece(tile):
+    def is_owned_by(self, check):
+        return self.owner is not None and self.owner == check
+
+    def is_not_owned_by(self, check):
+        return self.owner is not None and self.owner != check
+
+class stone(tile):
     def __init__(self, owner, state, row, col):
         self.state = state
         super().__init__(
@@ -276,7 +297,7 @@ class piece(tile):
         return generate_hash(self.row, self.col)
 
     def __eq__(self, other):
-        return isinstance(other, piece) and \
+        return isinstance(other, stone) and \
             self.owner == other.owner and hash(self) == hash(other)
 
 
@@ -291,78 +312,70 @@ class wall(tile):
 
 class ruleset():
     @staticmethod
-    def find_captures(board, owner, root):
+    def resolve_captures(board, owner, root):
         capture_groups = []
-        for lib in root.liberties:
-            if isinstance(lib, piece) and ruleset.is_other_player(lib, owner):
-                capture_groups.append(ruleset.find_captures_helper(board, owner, lib, {lib}))
+        for dame in root.liberties:
+            if isinstance(dame, stone) and dame.is_not_owned_by(owner):
+                capture_groups.append(ruleset.find_group(board, owner, dame, {dame}))
 
         for capture_group in capture_groups:
             is_captured = True
             liberties = reduce(or_, [{c for c in capture.liberties} for capture in capture_group])
-            for lib in liberties:
-                if isinstance(lib, tile):
-                    if lib.owner is None:
-                        is_captured = False
+            for dame in liberties:
+                if isinstance(dame, tile) and dame.owner is None:
+                    is_captured = False
             if is_captured:
                 for capture in capture_group:
                     board[capture.row][capture.col] = tile(row=capture.row, col=capture.col)
 
     @staticmethod
-    def sacrificed_piece(board, other, root):       
-        capture_group = ruleset.find_captures_helper(board, other, root, {root})
-
-        print(capture_group)
+    def sacrificed_stone(board, other, root):       
+        capture_group = ruleset.find_group(board, other, root, {root})
 
         is_captured = True
-        liberties = reduce(or_, [{c for c in capture.liberties} for capture in capture_group])
-        for lib in liberties:
-            if isinstance(lib, tile):
-                if lib.owner is None:
+        liberties = reduce(or_, [{dame for dame in capture.liberties} for capture in capture_group])
+        for dame in liberties:
+            if isinstance(dame, tile):
+                if dame.owner is None:
                     is_captured = False
         return is_captured
 
     @staticmethod
-    def find_captures_helper(board, owner, leaf, captures):
-        for lib in leaf.liberties:
-            if isinstance(lib, piece) and ruleset.is_other_player(lib, owner) and lib not in captures:
-                captures.add(lib)
-                ruleset.find_captures_helper(board, owner, lib, captures)
+    def find_group(board, owner, leaf, captures):
+        for dame in leaf.liberties:
+            if isinstance(dame, stone) and dame.is_not_owned_by(owner) and dame not in captures:
+                captures.add(dame)
+                ruleset.find_group(board, owner, dame, captures)
         return captures
 
     @staticmethod
     def validate_placement(board, owner, row, col, last_state):
-        print(f"placed_on_occupied_space {ruleset.placed_on_occupied_space(board, owner, row, col)}")
-        print(f"placed_on_previously_played_space {ruleset.placed_on_previously_played_space(row, col, last_state)}")  
         if ruleset.placed_on_occupied_space(board, owner, row, col) or \
            ruleset.placed_on_previously_played_space(row, col, last_state):
            raise placementValidationError
     
     @staticmethod
     def resolve_placement(board, other, placement):
-        print(f"sacrificed_piece {ruleset.sacrificed_piece(board, other, placement)}")
-        if ruleset.sacrificed_piece(board, other, placement):
+        ret = ruleset.sacrificed_stone(board, other, placement)
+        print(f"sacrificed_stone - {ret}")
+        if ret:
             raise placementValidationError
 
     @staticmethod
     def placed_on_occupied_space(board, owner, row, col):
-        return board[col][row] and board[col][row].owner is not None
+        ret = board[col][row] and type(board[col][row].owner) is tile
+        print(f"placed_on_occupied_space - {ret}")
+        return ret
 
     @staticmethod
     def placed_on_previously_played_space(row, col, last_state):
-        return (row, col) == (last_state[1], last_state[2]) if last_state else False
+        ret = (row, col) == (last_state[1], last_state[2]) if last_state else False
+        print(f"placed_on_previously_played_space - {ret}")
+        return ret
 
     @staticmethod
     def end_game(current_pass, last_pass_state):
         return current_pass and last_pass_state
-
-    @staticmethod
-    def is_current_player(this, check):
-        return this.owner is not None and this.owner == check
-
-    @staticmethod
-    def is_other_player(this, check):
-        return this.owner is not None and this.owner != check
 
 
 class placementValidationError(Exception):
@@ -373,39 +386,45 @@ def generate_hash(row, col):
     # https://stackoverflow.com/a/682481
     return ( row << 16 ) ^ col;
 
+
+class FakePayload:
+    def __init__(self, **kwds):
+        self.__dict__.update(kwds)
+
+
 # test capture
-# self.board[0][3] = piece(
+# self.board[0][3] = stone(
 #     owner=self.tertiary,
 #     state=self,
 #     row=0,
 #     col=3
 # )
-# self.board[1][3] = piece(
+# self.board[1][3] = stone(
 #     owner=self.tertiary,
 #     state=self,
 #     row=1,
 #     col=3
 # )
 
-# self.board[0][2] = piece(
+# self.board[0][2] = stone(
 #     owner=self.primary,
 #     state=self,
 #     row=0,
 #     col=3
 # )
-# self.board[1][2] = piece(
+# self.board[1][2] = stone(
 #     owner=self.primary,
 #     state=self,
 #     row=1,
 #     col=3
 # )
-# self.board[0][4] = piece(
+# self.board[0][4] = stone(
 #     owner=self.primary,
 #     state=self,
 #     row=0,
 #     col=3
 # )
-# self.board[1][4] = piece(
+# self.board[1][4] = stone(
 #     owner=self.primary,
 #     state=self,
 #     row=1,
@@ -413,27 +432,59 @@ def generate_hash(row, col):
 # )
 
 # test sacrifice
-# self.board[0][3] = piece(
+# self.board[0][3] = stone(
 #     owner=self.tertiary,
 #     state=self,
 #     row=1,
 #     col=3
 # )
-# self.board[1][2] = piece(
+# self.board[1][2] = stone(
 #     owner=self.tertiary,
 #     state=self,
 #     row=0,
 #     col=3
 # )
-# self.board[1][4] = piece(
+# self.board[1][4] = stone(
 #     owner=self.tertiary,
 #     state=self,
 #     row=1,
 #     col=3
 # )
-# self.board[2][3] = piece(
+# self.board[2][3] = stone(
 #     owner=self.tertiary,
 #     state=self,
 #     row=1,
+#     col=3
+# )
+
+# test bug 1
+# self.board[5][3] = stone(
+#     owner=self.tertiary,
+#     state=self,
+#     row=1,
+#     col=3
+# )
+# self.board[6][4] = stone(
+#     owner=self.tertiary,
+#     state=self,
+#     row=0,
+#     col=3
+# )
+# self.board[6][6] = stone(
+#     owner=self.tertiary,
+#     state=self,
+#     row=1,
+#     col=3
+# )
+# self.board[6][3] = stone(
+#     owner=self.primary,
+#     state=self,
+#     row=1,
+#     col=3
+# )
+# self.board[7][4] = stone(
+#     owner=self.primary,
+#     state=self,
+#     row=0,
 #     col=3
 # )
