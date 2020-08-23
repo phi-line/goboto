@@ -7,6 +7,13 @@ import uuid
 from operator import or_
 from functools import reduce
 
+import string
+from io import BytesIO
+
+import cairosvg
+import requests
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
 class go():
     id = uuid.uuid4()
     name = 'go'
@@ -151,11 +158,14 @@ class go():
             self.current_player == self.primary \
             else discord.Color.from_rgb(*tertiary_color)
 
-    def get_player_emojis(self):
+    def get_player_emojis(self, encode=False):
         db_primary = self.db.get_player(self.primary.id)
         db_tertiary = self.db.get_player(self.tertiary.id)
         primary_tile = db_primary[1] if db_primary[1] else self.team_skin[self.primary.id]['tile']
         tertiary_tile = db_tertiary[1] if db_tertiary[1] else self.team_skin[self.tertiary.id]['tile']
+        if encode:
+            primary_tile = primary_tile.encode('utf8')
+            tertiary_tile = tertiary_tile.encode('utf8')
         return primary_tile, tertiary_tile
 
     def render_board(self):
@@ -177,6 +187,10 @@ class go():
             ret += u"\U000000A0"*3 + (u"\U000000A0"*2 + u"\U00002002" + u"\U00002009").join(self.WINNER_BUTTONS.keys())
         ret += "\n```"
         return ret
+    
+    def render_board_image(self):
+        primary_tile, tertiary_tile = self.get_player_emojis(encode=True)
+
 
     def render_state(self, message):
         return f"{self.render_last_selection()}{self.render_selection(message)}"
@@ -424,20 +438,20 @@ class ruleset():
     @staticmethod
     def validate_sacrifice(board, other, placement):
         ret = ruleset.sacrificed_stone(board, other, placement)
-        print(f"sacrificed_stone - {ret}")
+        # print(f"sacrificed_stone - {ret}")
         if ret:
             raise placementValidationError
 
     @staticmethod
     def placed_on_occupied_space(board, owner, row, col):
         ret = board[row][col] and type(board[row][col]) is stone
-        print(f"placed_on_occupied_space - {ret} {type(board[row][col])}")
+        # print(f"placed_on_occupied_space - {ret} {type(board[row][col])}")
         return ret
 
     @staticmethod
     def placed_on_previously_played_space(row, col, last_state):
         ret = (row, col) == (last_state[1], last_state[2]) if last_state else False
-        print(f"placed_on_previously_played_space - {ret}")
+        # print(f"placed_on_previously_played_space - {ret}")
         return ret
 
     @staticmethod
@@ -457,3 +471,72 @@ def generate_hash(row, col):
 class FakePayload:
     def __init__(self, **kwds):
         self.__dict__.update(kwds)
+
+if __name__ == '__main__':
+    # print(to_code_point('\ud83c\udde8\ud83c\uddf3', '-'))
+
+    step_count = 8
+    height = 490
+    width = 490
+    goban = Image.new(mode='RGBA', size=(height, width), color=255)
+
+    background = Image.open('games/assets/kaya.jpg', 'r')
+    background = background.resize((goban.width, goban.height), Image.ANTIALIAS)
+    goban.paste(background, (0,0))
+
+    # https://randomgeekery.org/post/2017/11/drawing-grids-with-python-and-pillow/
+    draw = ImageDraw.Draw(goban)
+    y_start = 0
+    y_end = goban.height
+    step_size = int(goban.width / step_count)
+
+    for x in range(0, goban.width, step_size):
+        line = ((x, y_start), (x, y_end))
+        draw.line(line, fill=0, width=2)
+
+    x_start = 0
+    x_end = goban.width
+
+    for y in range(0, goban.height, step_size):
+        line = ((x_start, y), (x_end, y))
+        draw.line(line, fill=0, width=2)
+
+    goban = goban.convert('RGB')
+
+    out_height = height + step_size * 2
+    out_width = width + step_size * 2
+
+    out = Image.new(mode='RGBA', size=(out_height, out_width), color=255)
+    background = Image.open('games/assets/kaya.jpg', 'r')
+    background = background.resize((out.width, out.height), Image.ANTIALIAS)
+    out.paste(background, (0,0))
+    out.paste(goban, (int((out_width - width)/2), int((out_height - height)/2)), goban.convert('RGBA'))
+
+    draw = ImageDraw.Draw(out)
+    fnt = ImageFont.truetype("SourceCodePro-Medium.ttf", 28)
+
+    for xi, x in enumerate(range(int(step_size * .92), goban.width + step_size, step_size)):
+        draw.text((x, 0), f"{xi + 1}", font=fnt, fill=(0, 0, 0), align="center")
+
+    for xi, x in enumerate(range(int(step_size * .92), goban.width + step_size, step_size)):
+        draw.text((x, out.height - int(step_size - step_size/3)), f"{xi + 1}", font=fnt, fill=(0, 0, 0), align="center")
+
+    for yi, y in enumerate(range(int(step_size * .7), goban.height + step_size, step_size)):
+        draw.text((int(step_size/6), y), string.ascii_uppercase[yi], font=fnt, fill=(0, 0, 0), align="center")
+
+    for yi, y in enumerate(range(int(step_size * .7), goban.height + step_size, step_size)):
+        draw.text((int(out.width - step_size/2), y), string.ascii_uppercase[yi], font=fnt, fill=(0, 0, 0), align="center")
+
+    emoji = '%04x' % ord(chr(0x1f604))
+    emoji_buff = BytesIO()
+    cairosvg.svg2png(url=f'https://twemoji.maxcdn.com/v/13.0.1/svg/{emoji}.svg', write_to=emoji_buff, scale=1.5) #scale=1.75)
+    tile = Image.open(emoji_buff)
+
+    # col then row
+    col = 2
+    row = 3
+    out.paste(tile, (int(1 + step_size*col - tile.width/2),int(1 + step_size*row - tile.height/2)), tile.convert('RGBA'))
+
+    del draw
+
+    out.show()
