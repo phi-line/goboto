@@ -1,3 +1,5 @@
-*.sh
+*__botcache__
 *__pycache__
+*.sh
 *.sqlite3
+*.DS_Store

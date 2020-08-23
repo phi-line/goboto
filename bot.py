@@ -86,7 +86,7 @@ class sessions():
         if not self.get_session(session_id):
             db.insert_bulk([primary.id, tertiary.id])
             message = await channel.send(f"{primary.name} booting session between {primary.name} and {tertiary.name}...")
-            new_session = application(client=client, db=db,channel=channel, message=message, primary=primary, tertiary=tertiary, mock=mock)
+            new_session = application(session_id=session_id, client=client, db=db,channel=channel, message=message, primary=primary, tertiary=tertiary, mock=mock)
 
             sub_message = None
             if hasattr(new_session, 'SUB_MESSAGE'):
@@ -202,6 +202,7 @@ async def on_message(message):
         if len(emoji) != 2 or emoji[1] not in UNICODE_EMOJI:
             await message.channel.send(f"invalid emoji")
             return
+        await message.channel.send(f"set emoji")
         emoji = emoji[1]
 
         db.insert_player(message.author.id)

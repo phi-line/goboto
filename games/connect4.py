@@ -12,7 +12,8 @@ class connect4():
     PRIMARY_COLOR = (255,175,44)
     TERTIARY_COLOR = (84,174,239)
 
-    def __init__(self, client, db, channel, message, primary, tertiary):
+    def __init__(self, session_id, client, db, channel, message, primary, tertiary):
+        self.session_id = session_id
         self.client = client
         self.db = db
         self.channel = channel

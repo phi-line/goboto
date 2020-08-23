@@ -4,15 +4,48 @@ import random
 import string
 import copy
 import uuid
+import hashlib
 from operator import or_
 from functools import reduce
+import pathlib
 
 import string
 from io import BytesIO
 
-import cairosvg
 import requests
+import cairosvg
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+import logging
+import boto3
+from botocore.exceptions import ClientError
+
+def upload_file(filename, bucket, object_name=None):
+    """Upload a file to an S3 bucket
+
+    :param file_name: File to upload
+    :param bucket: Bucket to upload to
+    :param object_name: S3 object name. If not specified then file_name is used
+    :return: True if file was uploaded, else False
+    """
+
+    # If S3 object_name was not specified, use file_name
+    if object_name is None:
+        object_name = filename
+
+    # Upload the file
+    s3_client = boto3.client('s3')
+    try:
+        response = s3_client.upload_file(
+            filename,
+            bucket,
+            object_name,
+            ExtraArgs={'ACL': 'public-read'}
+        )
+    except ClientError as e:
+        logging.error(e)
+        return False
+    return True
 
 class go():
     id = uuid.uuid4()
@@ -29,7 +62,8 @@ class go():
     BLACK_COLOR = (0,0,0)
     SUB_MESSAGE = "`Select a row and a column`"
 
-    def __init__(self, client, db, channel, message, primary, tertiary, mock):
+    def __init__(self, session_id, client, db, channel, message, primary, tertiary, mock):
+        self.session_id = session_id
         self.client = client
         self.db = db
         self.channel = channel
@@ -75,7 +109,6 @@ class go():
         return True if self.winner else False
 
     async def play_move(self, payload):
-        self.lock = True
         if payload.message_id == self.message.id:
             # make row selection
             self.row_selection = self.BUTTONS_ROW[payload.emoji.name]
@@ -86,7 +119,11 @@ class go():
             not self.mock and await self.sub_message.remove_reaction(payload.emoji, payload.member)
 
         # only accept if player makes both a row and col selection
+        if (self.row_selection and not self.col_selection) or (self.col_selection and not self.row_selection):
+            await self.sub_message.edit(content=self.render_state('Make your placement:'))
+
         if self.row_selection is not None and self.col_selection is not None:
+            self.lock = True
             # attempt to place. we need this stone in board state in order to perform checks
             # temp_stone = copy.deepcopy(self.board[self.row_selection][self.col_selection])
             temp_stone = copy.copy(self.board[self.row_selection][self.col_selection])
@@ -114,21 +151,17 @@ class go():
                 self.board[self.row_selection][self.col_selection] = temp_stone
                 await self.sub_message.edit(content=self.render_selection('Invalid Placement:'))
             else:
-                await self.sub_message.edit(content=self.SUB_MESSAGE)
-
                 ruleset.resolve_captures(
                     board=self.board,
                     captures=captures
                 )
+                self.current_player = self.primary if self.is_player_current(self.tertiary) else self.tertiary
                 await self.render_message()
                 self.last_state = copy.deepcopy((self.current_player.id, self.row_selection, self.col_selection))
-                self.current_player = self.primary if self.is_player_current(self.tertiary) else self.tertiary
             finally:
                 self.row_selection = None
                 self.col_selection = None
-
-        self.lock = False
-        not self.mock and await self.render_message()
+            self.lock = False
 
     def get_board_tile(self, row, col):
         if row < 0 or row >= self.BOARD_Y or col < 0 or col >= self.BOARD_X:
@@ -143,8 +176,10 @@ class go():
         else:
             header = f"Congratulations, {self.winner.name}"
         container = discord.Embed(title=header, color=self.get_container_color())
-        container.add_field(name=self.render_state('Make your placement:'), value=self.render_board(), inline=True)
+        # container.add_field(name=self.render_state('Make your placement:'), value=self.render_board(), inline=True)
+        container.set_image(url=self.render_board_image())
         await self.message.edit(content=f"{self.primary.mention} ⚔️ {self.tertiary.mention}", embed=container)
+        await self.sub_message.edit(content=self.render_state('Make your placement:'))
 
     def is_player_current(self, player):
         return self.current_player == player
@@ -158,14 +193,11 @@ class go():
             self.current_player == self.primary \
             else discord.Color.from_rgb(*tertiary_color)
 
-    def get_player_emojis(self, encode=False):
+    def get_player_emojis(self):
         db_primary = self.db.get_player(self.primary.id)
         db_tertiary = self.db.get_player(self.tertiary.id)
         primary_tile = db_primary[1] if db_primary[1] else self.team_skin[self.primary.id]['tile']
         tertiary_tile = db_tertiary[1] if db_tertiary[1] else self.team_skin[self.tertiary.id]['tile']
-        if encode:
-            primary_tile = primary_tile.encode('utf8')
-            tertiary_tile = tertiary_tile.encode('utf8')
         return primary_tile, tertiary_tile
 
     def render_board(self):
@@ -189,22 +221,111 @@ class go():
         return ret
     
     def render_board_image(self):
-        primary_tile, tertiary_tile = self.get_player_emojis(encode=True)
+        step_count = 8
+        height = 490
+        width = 490
+        goban = Image.new(mode='RGBA', size=(height, width), color=255)
 
+        background = Image.open('games/assets/kaya.jpg', 'r')
+        background = background.resize((goban.width, goban.height), Image.ANTIALIAS)
+        goban.paste(background, (0,0))
+
+        # https://randomgeekery.org/post/2017/11/drawing-grids-with-python-and-pillow/
+        draw = ImageDraw.Draw(goban)
+        y_start = 0
+        y_end = goban.height
+        step_size = int(goban.width / step_count)
+
+        for x in range(0, goban.width, step_size):
+            line = ((x, y_start), (x, y_end))
+            draw.line(line, fill=0, width=2)
+
+        x_start = 0
+        x_end = goban.width
+
+        for y in range(0, goban.height, step_size):
+            line = ((x_start, y), (x_end, y))
+            draw.line(line, fill=0, width=2)
+
+        goban = goban.convert('RGB')
+
+        out_height = height + step_size * 2
+        out_width = width + step_size * 2
+
+        out = Image.new(mode='RGBA', size=(out_height, out_width), color=255)
+        background = Image.open('games/assets/kaya.jpg', 'r')
+        background = background.resize((out.width, out.height), Image.ANTIALIAS)
+        out.paste(background, (0,0))
+        out.paste(goban, (int((out_width - width)/2), int((out_height - height)/2)), goban.convert('RGBA'))
+
+        draw = ImageDraw.Draw(out)
+        fnt = ImageFont.truetype("SourceCodePro-Medium.ttf", 28)
+
+        for xi, x in enumerate(range(int(step_size * .92), goban.width + step_size, step_size)):
+            draw.text((x, 0), f"{xi + 1}", font=fnt, fill=(0, 0, 0), align="center")
+
+        for xi, x in enumerate(range(int(step_size * .92), goban.width + step_size, step_size)):
+            draw.text((x, out.height - int(step_size - step_size/3)), f"{xi + 1}", font=fnt, fill=(0, 0, 0), align="center")
+
+        for yi, y in enumerate(range(int(step_size * .7), goban.height + step_size, step_size)):
+            draw.text((int(step_size/6), y), string.ascii_uppercase[yi], font=fnt, fill=(0, 0, 0), align="center")
+
+        for yi, y in enumerate(range(int(step_size * .7), goban.height + step_size, step_size)):
+            draw.text((int(out.width - step_size/2), y), string.ascii_uppercase[yi], font=fnt, fill=(0, 0, 0), align="center")
+
+        primary_tile, tertiary_tile = self.get_player_emojis()
+        emoji = '%04x' % int(f'{ord(primary_tile):X}', 16)
+        emoji_buff = BytesIO()
+        cairosvg.svg2png(url=f'https://twemoji.maxcdn.com/v/13.0.1/svg/{emoji}.svg', write_to=emoji_buff, scale=1.5) #scale=1.75)
+        primary_tile_img = Image.open(emoji_buff)
+
+        emoji = '%04x' % int(f'{ord(tertiary_tile):X}', 16)
+        emoji_buff = BytesIO()
+        cairosvg.svg2png(url=f'https://twemoji.maxcdn.com/v/13.0.1/svg/{emoji}.svg', write_to=emoji_buff, scale=1.5) #scale=1.75)
+        tertiary_tile_img = Image.open(emoji_buff)
+
+        for yi, y in enumerate(self.board):
+            for xi, t in enumerate(y):
+                if t and t.owner and t.owner.id is self.primary.id:
+                    tile = primary_tile_img
+                    out.paste(
+                        tile,
+                        (int(1 + step_size*(yi+1) - tile.width/2),int(1 + step_size*(xi+1) - tile.height/2)),
+                        tile.convert('RGBA')
+                    )
+                elif t and t.owner and t.owner.id is self.tertiary.id:
+                    tile = tertiary_tile_img
+                    out.paste(
+                        tile,
+                        (int(1 + step_size*(yi+1) - tile.width/2),int(1 + step_size*(xi+1) - tile.height/2)),
+                        tile.convert('RGBA')
+                    )
+        
+        out = out.convert('RGB')
+        
+        md5hash = hashlib.md5(out.tobytes())
+        file_hash = md5hash.hexdigest()
+        filename = f'__botcache__/go/{file_hash}.jpg'
+        file = pathlib.Path(filename)
+        if not file.exists():
+            out.save(filename, quality=75)
+            upload_file(filename, 'phi.public')
+
+        return f"https://s3-us-west-2.amazonaws.com/phi.public/{filename}"
 
     def render_state(self, message):
-        return f"{self.render_last_selection()}{self.render_selection(message)}"
+        return f"\n{self.render_selection(message)}{self.render_last_selection()}"
 
     def render_selection(self, message):
-        row = list(self.BUTTONS_ROW.keys())[self.row_selection] if self.row_selection is not None else "\t\t"
-        col = list(self.BUTTONS_COL.keys())[self.col_selection] if self.col_selection is not None else "\t\t"
-        return f"`{message}`\t{row}\t{col}"
+        col = f"{self.col_selection + 1} " if self.col_selection is not None else " "
+        row = f"{string.ascii_uppercase[self.row_selection]} " if self.row_selection is not None else " "
+        return f"`{message} {col}{row}`\n"
     
     def render_last_selection(self):
         if self.last_state:
-            row = list(self.BUTTONS_ROW.keys())[self.last_state[1]] if self.last_state[1] is not None else "\t\t"
-            col = list(self.BUTTONS_COL.keys())[self.last_state[2]] if self.last_state[2] is not None else "\t\t"
-            return f"`Your opponent chose:`\t{row}\t{col}\n"
+            col = f"{self.last_state[2] + 1} " if self.last_state[2] is not None else " "
+            row = f"{string.ascii_uppercase[self.last_state[1]]} " if self.last_state[1] is not None else " "
+            return f"`Your opponent chose: {col}{row}`"
         else:
             return " "
 
@@ -276,32 +397,32 @@ class go():
         # await self.simulate_move(5,5,self.tertiary)
 
         # bug 1
-        # await self.simulate_move(5,3,self.primary)
-        # await self.simulate_move(6,3,self.tertiary)
-        # await self.simulate_move(6,4,self.primary)
-        # await self.simulate_move(7,4,self.tertiary)
-        # await self.simulate_move(6,6,self.primary)
-        # await self.simulate_move(6,5,self.tertiary)
-        # await self.simulate_move(5,6,self.primary)
+        await self.simulate_move(5,3,self.primary)
+        await self.simulate_move(6,3,self.tertiary)
+        await self.simulate_move(6,4,self.primary)
+        await self.simulate_move(7,4,self.tertiary)
+        await self.simulate_move(6,6,self.primary)
+        await self.simulate_move(6,5,self.tertiary)
+        await self.simulate_move(5,6,self.primary)
 
         # nested capture
-        await self.simulate_move(2,4,self.primary)
-        await self.simulate_move(4,5,self.tertiary)
-        await self.simulate_move(6,4,self.primary)
-        await self.simulate_move(5,4,self.tertiary)
-        await self.simulate_move(4,2,self.primary)
-        await self.simulate_move(4,3,self.tertiary)
-        await self.simulate_move(4,6,self.primary)
-        await self.simulate_move(3,4,self.tertiary)
-        await self.simulate_move(3,3,self.primary)
-        await self.simulate_move(2,2,self.tertiary)
-        await self.simulate_move(3,5,self.primary)
-        await self.simulate_move(2,6,self.tertiary)
-        await self.simulate_move(5,5,self.primary)
-        await self.simulate_move(6,6,self.tertiary)
-        await self.simulate_move(5,3,self.primary)
-        await self.simulate_move(6,2,self.tertiary)
-        await self.simulate_move(4,4,self.primary)
+        # await self.simulate_move(2,4,self.primary)
+        # await self.simulate_move(4,5,self.tertiary)
+        # await self.simulate_move(6,4,self.primary)
+        # await self.simulate_move(5,4,self.tertiary)
+        # await self.simulate_move(4,2,self.primary)
+        # await self.simulate_move(4,3,self.tertiary)
+        # await self.simulate_move(4,6,self.primary)
+        # await self.simulate_move(3,4,self.tertiary)
+        # await self.simulate_move(3,3,self.primary)
+        # await self.simulate_move(2,2,self.tertiary)
+        # await self.simulate_move(3,5,self.primary)
+        # await self.simulate_move(2,6,self.tertiary)
+        # await self.simulate_move(5,5,self.primary)
+        # await self.simulate_move(6,6,self.tertiary)
+        # await self.simulate_move(5,3,self.primary)
+        # await self.simulate_move(6,2,self.tertiary)
+        # await self.simulate_move(4,4,self.primary)
 
 
 class tile():
