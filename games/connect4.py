@@ -148,3 +148,6 @@ class connect4():
             self.has_buttons = True
         elif self.winner:
             await self.message.clear_reactions()
+
+    def on_complete(self):
+        pass

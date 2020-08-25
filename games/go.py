@@ -8,6 +8,7 @@ import hashlib
 from operator import or_
 from functools import reduce
 import pathlib
+import datetime
 
 import string
 from io import BytesIO
@@ -15,6 +16,8 @@ from io import BytesIO
 import requests
 import cairosvg
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+import ffmpeg
 
 import logging
 import boto3
@@ -47,9 +50,25 @@ def upload_file(filename, bucket, object_name=None):
         return False
     return True
 
+def flush_s3_folder(directory, bucket):
+    s3 = boto3.resource('s3')
+    bucket = s3.Bucket(bucket)
+    bucket.objects.filter(Prefix=directory).delete()
+    # delete_key_list = []
+    # for key in bucket.list(prefix=directory):
+    #     delete_key_list.append(key)
+    #     if len(delete_key_list) > 100:
+    #         bucket.delete_keys(delete_key_list)
+    #         delete_key_list = []
+
+    # if len(delete_key_list) > 0:
+    #     bucket.delete_keys(delete_key_list)
+
+def make_game_video(filepath, filename):
+    print(filepath)
+    ffmpeg.input(f'{filepath}/*.jpg', pattern_type='glob', framerate=2).output(f'{filepath}/{filename}').run()
+
 class go():
-    id = uuid.uuid4()
-    name = 'go'
     BOARD_X = 9
     BOARD_Y = 9
     BUTTONS_ROW = {'1️⃣':0,'2️⃣':1,'3️⃣':2,'4️⃣':3,'5️⃣':4,'6️⃣':5,'7️⃣':6,'8️⃣':7,'9️⃣':8}
@@ -63,6 +82,7 @@ class go():
     SUB_MESSAGE = "`Select a row and a column`"
 
     def __init__(self, session_id, client, db, channel, message, primary, tertiary, mock):
+        self.id = uuid.uuid4()
         self.session_id = session_id
         self.client = client
         self.db = db
@@ -94,6 +114,9 @@ class go():
         self.last_state = None
         self.lock = False
 
+        self.assets_directory = f'__botcache__/go/{self.session_id}/{self.id}'
+        pathlib.Path(self.assets_directory).mkdir(parents=True, exist_ok=True)
+
     @property
     def other_player(self):
         return self.primary if self.current_player == self.tertiary else self.tertiary
@@ -124,6 +147,7 @@ class go():
 
         if self.row_selection is not None and self.col_selection is not None:
             self.lock = True
+            is_valid_placement = False
             # attempt to place. we need this stone in board state in order to perform checks
             # temp_stone = copy.deepcopy(self.board[self.row_selection][self.col_selection])
             temp_stone = copy.copy(self.board[self.row_selection][self.col_selection])
@@ -151,16 +175,19 @@ class go():
                 self.board[self.row_selection][self.col_selection] = temp_stone
                 await self.sub_message.edit(content=self.render_selection('Invalid Placement:'))
             else:
+                is_valid_placement = True
                 ruleset.resolve_captures(
                     board=self.board,
                     captures=captures
                 )
-                self.current_player = self.primary if self.is_player_current(self.tertiary) else self.tertiary
-                await self.render_message()
-                self.last_state = copy.deepcopy((self.current_player.id, self.row_selection, self.col_selection))
             finally:
+                if is_valid_placement:
+                    self.last_state = copy.deepcopy((self.current_player.id, self.row_selection, self.col_selection))
                 self.row_selection = None
                 self.col_selection = None
+                if is_valid_placement:
+                    self.current_player = self.primary if self.is_player_current(self.tertiary) else self.tertiary
+                    await self.render_message()
             self.lock = False
 
     def get_board_tile(self, row, col):
@@ -172,7 +199,7 @@ class go():
     async def render_message(self):
         not self.mock and await self.refresh_buttons()
         if not self.winner:
-            header = f"It's your move, {self.current_player.name}."
+            header = f"It's your move, {self.current_player.display_name}."
         else:
             header = f"Congratulations, {self.winner.name}"
         container = discord.Embed(title=header, color=self.get_container_color())
@@ -300,31 +327,36 @@ class go():
                         (int(1 + step_size*(yi+1) - tile.width/2),int(1 + step_size*(xi+1) - tile.height/2)),
                         tile.convert('RGBA')
                     )
-        
+
         out = out.convert('RGB')
         
-        md5hash = hashlib.md5(out.tobytes())
-        file_hash = md5hash.hexdigest()
-        filename = f'__botcache__/go/{file_hash}.jpg'
-        file = pathlib.Path(filename)
-        if not file.exists():
-            out.save(filename, quality=75)
-            upload_file(filename, 'phi.public')
+        timestamp = datetime.datetime.now().isoformat()
+        full_path = f'{self.assets_directory}/{timestamp}.jpg'
+        out.save(full_path, quality=65)
+        flush_s3_folder(self.assets_directory, 'phi.public')
+        upload_file(full_path, 'phi.public')
+        return f"https://s3-us-west-2.amazonaws.com/phi.public/{full_path}"
 
-        return f"https://s3-us-west-2.amazonaws.com/phi.public/{filename}"
+    async def on_complete(self):
+        timestamp = datetime.datetime.now().isoformat()
+        filename = f'{self.primary.id}-{self.tertiary.id}-{timestamp}.mp4'
+        full_path = f"{self.assets_directory}/{filename}"
+        make_game_video(self.assets_directory, filename)
+        video = discord.File(full_path, filename=filename)
+        await self.channel.send(f"{self.primary.mention} ⚔️ {self.tertiary.mention} match summary", file=video)
 
     def render_state(self, message):
         return f"\n{self.render_selection(message)}{self.render_last_selection()}"
 
     def render_selection(self, message):
-        col = f"{self.col_selection + 1} " if self.col_selection is not None else " "
-        row = f"{string.ascii_uppercase[self.row_selection]} " if self.row_selection is not None else " "
+        col = f"{self.row_selection + 1} " if self.row_selection is not None else " "
+        row = f"{string.ascii_uppercase[self.col_selection]} " if self.col_selection is not None else " "
         return f"`{message} {col}{row}`\n"
     
     def render_last_selection(self):
         if self.last_state:
-            col = f"{self.last_state[2] + 1} " if self.last_state[2] is not None else " "
-            row = f"{string.ascii_uppercase[self.last_state[1]]} " if self.last_state[1] is not None else " "
+            col = f"{self.last_state[1] + 1} " if self.last_state[1] is not None else " "
+            row = f"{string.ascii_uppercase[self.last_state[2]]} " if self.last_state[2] is not None else " "
             return f"`Your opponent chose: {col}{row}`"
         else:
             return " "

@@ -6,7 +6,7 @@ import sqlite3
 import logging
 from collections import defaultdict
 
-from games import GAMES, connect4, waveRPG, go
+from games import GAMES, connect4, go
 
 import discord
 from faker import Faker
@@ -108,6 +108,7 @@ class sessions():
     async def remove_session(self, channel, primary, tertiary):
         session_id = sessions.generate_session_id(primary, tertiary)
         if self.get_session(session_id):
+            await self._sessions[session_id].on_complete()
             del self._sessions[session_id]
             self._players[primary.id].remove(session_id)
             # congrats you played yourself
@@ -146,7 +147,7 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    if message.content == '' and message.mentions and message.mentions[0] == client.user:
+    if message.content == '<@!716377327470116965>' and message.mentions and message.mentions[0] == client.user:
         await message.channel.send('beep boop... human wtf why did you turn me on')
 
     if message.content.startswith('>connect4'):
@@ -154,9 +155,6 @@ async def on_message(message):
             await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=connect4)
         else:
             await message.channel.send(f"you need to mention someone to challenge them to a match")
-
-    # if message.content.startswith('>wave'):
-    #     await sessions.add_session(channel=message.channel, primary=message.author, tertiary=client.user, application=waveRPG)
 
     if message.content.startswith('>go'):
         if message.mentions and message.mentions[0]:
