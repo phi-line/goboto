@@ -20,6 +20,13 @@ class connect4():
         self.message = message
         self.primary = primary
         self.tertiary = tertiary
+        self.has_buttons = False
+        self.winner = None
+        self.lock = False
+
+        self.initialize_helper()
+
+    def initialize_helper(self):
         self.board = [[None,None,None,None,None,None,None],
                       [None,None,None,None,None,None,None],
                       [None,None,None,None,None,None,None],
@@ -27,35 +34,15 @@ class connect4():
                       [None,None,None,None,None,None,None],
                       [None,None,None,None,None,None,None]]
         self.current_player = random.choice([self.primary, self.tertiary]) if self.tertiary != self.client.user else self.primary
-        self.has_buttons = False
-        self.winner = None
-        self.lock = False
+
+    def is_player_current(self, player):
+        return self.current_player == player
 
     def is_completed(self):
         return True if self.winner else False
 
-    def detect_current_player_win(self):
-        for col in range(0, self.BOARD_X-3):
-            for row in range(0, self.BOARD_Y):
-                if self.board[row][col] == self.board[row][col+1] == self.board[row][col+2] == self.board[row][col+3] == self.current_player.id:
-                    return True
-
-        for row in range(0, self.BOARD_Y-3):
-            for col in range(0, self.BOARD_X):
-                if self.board[row][col] == self.board[row+1][col] == self.board[row+2][col] == self.board[row+3][col] == self.current_player.id:
-                    return True
-
-        for row in range(3, self.BOARD_Y):
-            for col in range(0, self.BOARD_X-3):
-                if self.board[row][col] == self.board[row-1][col+1] == self.board[row-2][col+2] == self.board[row-3][col+3] == self.current_player.id:
-                    return True
-
-        for row in range(3, self.BOARD_Y):
-            for col in range(3, self.BOARD_X):
-                if self.board[row][col] == self.board[row-1][col-1] == self.board[row-2][col-2] == self.board[row-3][col-3] == self.current_player.id:
-                    return True
-
-        return False
+    def on_complete(self):
+        pass
 
     async def play_move(self, payload):
         await self.message.remove_reaction(payload.emoji, payload.member)
@@ -93,7 +80,7 @@ class connect4():
                         break
 
         return ret_val
-    
+
     async def render_message(self):
         if not self.winner:
             header = f"It's your move, {self.current_player.name}"
@@ -103,26 +90,7 @@ class connect4():
         container.add_field(name=self.render_board(), value="⠀", inline=True)
         await self.message.edit(content=f"{self.primary.mention} ⚔️ {self.tertiary.mention}", embed=container)
         await self.refresh_buttons()
-
-    def is_player_current(self, player):
-        return self.current_player == player
-
-    def get_container_color(self):
-        db_primary = self.db.get_player(self.primary.id)
-        db_tertiary = self.db.get_player(self.tertiary.id)
-        primary_color = db_primary[2] if db_primary[2] else self.PRIMARY_COLOR
-        tertiary_color = db_tertiary[2] if db_tertiary[2] else self.TERTIARY_COLOR
-        return discord.Color.from_rgb(*primary_color) if \
-            self.current_player == self.primary \
-            else discord.Color.from_rgb(*tertiary_color)
-
-    def get_player_emojis(self):
-        db_primary = self.db.get_player(self.primary.id)
-        db_tertiary = self.db.get_player(self.tertiary.id)
-        primary_tile = db_primary[1] if db_primary[1] else self.PRIMARY_TILE
-        tertiary_tile = db_tertiary[1] if db_tertiary[1] else self.TERTIARY_TILE
-        return primary_tile, tertiary_tile
-
+    
     def render_board(self):
         primary_tile, tertiary_tile = self.get_player_emojis()
         ret = ""
@@ -149,5 +117,43 @@ class connect4():
         elif self.winner:
             await self.message.clear_reactions()
 
-    def on_complete(self):
-        pass
+
+    def detect_current_player_win(self):
+        for col in range(0, self.BOARD_X-3):
+            for row in range(0, self.BOARD_Y):
+                if self.board[row][col] == self.board[row][col+1] == self.board[row][col+2] == self.board[row][col+3] == self.current_player.id:
+                    return True
+
+        for row in range(0, self.BOARD_Y-3):
+            for col in range(0, self.BOARD_X):
+                if self.board[row][col] == self.board[row+1][col] == self.board[row+2][col] == self.board[row+3][col] == self.current_player.id:
+                    return True
+
+        for row in range(3, self.BOARD_Y):
+            for col in range(0, self.BOARD_X-3):
+                if self.board[row][col] == self.board[row-1][col+1] == self.board[row-2][col+2] == self.board[row-3][col+3] == self.current_player.id:
+                    return True
+
+        for row in range(3, self.BOARD_Y):
+            for col in range(3, self.BOARD_X):
+                if self.board[row][col] == self.board[row-1][col-1] == self.board[row-2][col-2] == self.board[row-3][col-3] == self.current_player.id:
+                    return True
+
+        return False
+
+    def get_container_color(self):
+        db_primary = self.db.get_player(self.primary.id)
+        db_tertiary = self.db.get_player(self.tertiary.id)
+        primary_color = db_primary[2] if db_primary[2] else self.PRIMARY_COLOR
+        tertiary_color = db_tertiary[2] if db_tertiary[2] else self.TERTIARY_COLOR
+        return discord.Color.from_rgb(*primary_color) if \
+            self.current_player == self.primary \
+            else discord.Color.from_rgb(*tertiary_color)
+
+    def get_player_emojis(self):
+        db_primary = self.db.get_player(self.primary.id)
+        db_tertiary = self.db.get_player(self.tertiary.id)
+        primary_tile = db_primary[1] if db_primary[1] else self.PRIMARY_TILE
+        tertiary_tile = db_tertiary[1] if db_tertiary[1] else self.TERTIARY_TILE
+        return primary_tile, tertiary_tile
+
