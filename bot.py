@@ -2,141 +2,21 @@ import os
 import sys
 import random
 import asyncio
-import sqlite3
-import logging
-from collections import defaultdict
 
-from games import GAMES, connect4, go
+from database import PlayersTable
+from router import SessionManager
+from games import GAMES, MOCK, Connect4, Go
+from utils import logger
 
 import discord
-from faker import Faker
 from emoji import UNICODE_EMOJI
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-handler = logging.StreamHandler(sys.stdout)
-handler.setLevel(logging.INFO)
-
-formatter = logging.Formatter("%(asctime)s - %(message)s")
-handler.setFormatter(formatter)
-
-logger.addHandler(handler)
-
 DISCORD_API_KEY = os.environ.get("DISCORD_API_KEY")
+ADMIN_ID = os.environ.get("ADMIN_ID")
+
 client = discord.Client()
-
-class database():
-    def __init__(self):
-        self.conn = sqlite3.connect('db.sqlite3')
-        c = self.conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS players (
-                        id TEXT,
-                        emoji TEXT,
-                        color BLOB
-                    )''')
-
-        self.conn.commit()
-
-    def insert_bulk(self, players):
-        for player_id in players:
-            self.insert_player(player_id)
-    
-    def insert_player(self, player_id):
-        c = self.conn.cursor()
-        data = (str(player_id), None, None)
-        c.execute('INSERT INTO players VALUES(?, ?, ?) ON CONFLICT DO NOTHING', data)
-        self.conn.commit()
-
-    def remove_player(self, player_id):
-        c = self.conn.cursor()
-        data = (str(player_id),)
-        c.execute('REMOVE players where id=(?)', data)
-        self.conn.commit() 
-
-    def get_player(self, player_id):
-        c = self.conn.cursor()
-        data = (str(player_id),)
-        c.execute('SELECT * from players where id=?', data)
-        self.conn.commit()
-        return c.fetchone()
-
-    def update_player_emoji(self, player_id, emoji):
-        c = self.conn.cursor()
-        data = (emoji, str(player_id),)
-        c.execute('UPDATE players SET emoji=? where id=?', data)
-        self.conn.commit()
-
-    def update_player_color(self, player_id, color):
-        c = self.conn.cursor()
-        data = (color, str(player_id),)
-        c.execute('UPDATE players SET emoji=? where id=?', data)
-        self.conn.commit()
-
-db = database()
-
-class sessions():
-    def __init__(self):
-        self._sessions = {}
-        self._messages = {}
-        self._players = defaultdict(set)
-
-    async def add_session(self, channel, primary, tertiary, application, mock=False):
-        session_id = sessions.generate_session_id(primary, tertiary)
-        if not self.get_session(session_id):
-            db.insert_bulk([primary.id, tertiary.id])
-            message = await channel.send(f"{primary.name} booting session between {primary.name} and {tertiary.name}...")
-            new_session = application(session_id=session_id, client=client, db=db,channel=channel, message=message, primary=primary, tertiary=tertiary, mock=mock)
-
-            sub_message = None
-            if hasattr(new_session, 'SUB_MESSAGE'):
-                sub_message = await channel.send(f"{new_session.SUB_MESSAGE}")
-                await new_session.initialize_sub_message(sub_message)
-
-            await new_session.render_message()
-
-            self._sessions[session_id] = new_session
-            self._players[primary.id].add(session_id)
-            self._players[tertiary.id].add(session_id)
-            self._messages[message.id] = session_id
-            if sub_message:
-                self._messages[sub_message.id] = session_id
-            return True
-        await channel.send(f"there is already a session between {primary.name} and {tertiary.name}")
-        return False
-
-    async def remove_session(self, channel, primary, tertiary):
-        session_id = sessions.generate_session_id(primary, tertiary)
-        if self.get_session(session_id):
-            await self._sessions[session_id].on_complete()
-            del self._sessions[session_id]
-            self._players[primary.id].remove(session_id)
-            # congrats you played yourself
-            if primary.id != tertiary.id:
-                self._players[tertiary.id].remove(session_id)
-            await channel.send(f"{primary.name} ended session between {primary.name} and {tertiary.name}")
-            return True
-        await channel.send(f"no active session found between and {tertiary.name}")
-        return False
-
-    def get_session(self, session_id):
-        return self._sessions[session_id] if session_id in self._sessions else None
-
-    def get_session_by_message(self, message_id):
-        return self._sessions[self._messages[message_id]] \
-            if message_id in self._messages and self._messages[message_id] in self._sessions else None
-
-    def get_session_by_player(self, player_id):
-        return [self._sessions[session_id] for session_id in self._players[player_id] if session_id in self._sessions] if player_id in self._players else None
-
-    @staticmethod
-    def generate_session_id(primary, tertiary):
-        uuid = Faker()
-        seed = (primary.id,tertiary.id) if primary.id > tertiary.id else (tertiary.id,primary.id)
-        uuid.seed_instance(seed)
-        return uuid.uuid4()
-
-sessions = sessions()
+players = PlayersTable()
+sessions = SessionManager(client, players)
 
 @client.event
 async def on_ready():
@@ -150,15 +30,20 @@ async def on_message(message):
     if message.content == '<@!716377327470116965>' and message.mentions and message.mentions[0] == client.user:
         await message.channel.send('beep boop... human wtf why did you turn me on')
 
+    if message.content.startswith('>help'):
+        await message.channel.send('''```>go @Person     | challenge Person to 9x9 Go
+>resign @Person | end game with Person
+>emoji :emoji:  | change emoji to selection```''')
+
     if message.content.startswith('>connect4'):
         if message.mentions and message.mentions[0]:
-            await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=connect4)
+            await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=Connect4)
         else:
             await message.channel.send(f"you need to mention someone to challenge them to a match")
 
     if message.content.startswith('>go'):
         if message.mentions and message.mentions[0]:
-            await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=go)
+            await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=Go)
         else:
             await message.channel.send(f"you need to mention someone to challenge them to a match")
     
@@ -179,21 +64,19 @@ async def on_message(message):
             await message.channel.send(f"you need to mention someone to challenge them to a match")
 
     if message.content.startswith('>mock'):
+        if message.author != client.get_user(int(ADMIN_ID)):
+            await message.channel.send(f"you must be a bot developer to use >mock")
         app = message.content.split(' ')
-        print(app)
-        if len(app) < 3 or app[1] not in GAMES:
+        if len(app) < 2 or app[1] not in MOCK:
             await message.channel.send(f"invalid app name")
             return
-        if message.mentions and message.mentions[0]:
-            await sessions.add_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0], application=GAMES.get(app[1]), mock=True)
-        else:
-            await message.channel.send(f"you need to mention someone to challenge them to a match")
+        if len(app) < 3 or app[2] not in MOCK.get(app[1]).SCENARIOS:
+            await message.channel.send(f"invalid scenario name. options are {', '.join(MOCK.get(app[1]).SCENARIOS.keys())}")
+            return
+        session = await sessions.add_session(channel=message.channel, primary=message.author, tertiary=client.user, application=MOCK.get(app[1]))
+        await session.load(app[2])        
 
-        games = sessions.get_session_by_player(message.author.id)
-        if games:
-            for board in games:
-                await board.simulate()
-        await sessions.remove_session(channel=message.channel, primary=message.author, tertiary=message.mentions[0])
+        await sessions.remove_session(channel=message.channel, primary=message.author, tertiary=client.user)
 
     if message.content.startswith('>emoji'):
         emoji = message.content.split('>emoji ')
@@ -203,16 +86,16 @@ async def on_message(message):
         await message.channel.send(f"set emoji")
         emoji = emoji[1]
 
-        db.insert_player(message.author.id)
-        db.update_player_emoji(message.author.id, emoji)
+        players.insert_player(message.author.id)
+        players.update_player_emoji(message.author.id, emoji)
         games = sessions.get_session_by_player(message.author.id)
         if games:
             for board in games:
                 await board.render_message()
 
     if message.content.startswith('>rm emoji'):
-        db.insert_player(message.author.id)
-        db.update_player_emoji(message.author.id, None)
+        players.insert_player(message.author.id)
+        players.update_player_emoji(message.author.id, None)
         await message.channel.send(f"unset emoji")
         games = sessions.get_session_by_player(message.author.id)
         if games:

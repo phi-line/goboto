@@ -1,7 +1,11 @@
-from .connect4 import connect4
-from .go import go
+from .connect4 import Connect4
+from .go import Go, MockGo
 
 GAMES = {
-    'connect4': connect4,
-    'go': go
+    'connect4': Connect4,
+    'go': Go
+}
+
+MOCK = {
+    'go': MockGo
 }
