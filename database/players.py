@@ -2,7 +2,7 @@ import sqlite3
 
 class PlayersTable():
     def __init__(self):
-        self.conn = sqlite3.connect('./db/db.sqlite3')
+        self.conn = sqlite3.connect('./database/db.sqlite3')
         c = self.conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS players (
                         id TEXT,
