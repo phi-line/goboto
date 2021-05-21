@@ -80,6 +80,7 @@ async def on_message(message):
 
     if message.content.startswith('>emoji'):
         emoji = message.content.split('>emoji ')
+        logger.info(emoji)
         if len(emoji) != 2 or emoji[1] not in UNICODE_EMOJI:
             await message.channel.send(f"invalid emoji")
             return

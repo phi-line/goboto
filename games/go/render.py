@@ -25,7 +25,7 @@ class GobanRenderer():
 class GameStateRenderer():
     def __init__(self, state, x_grid=9, y_grid=9, width=490, height=490, line_width=2,
         legend_margin_x=.92, legend_margin_y=.92, legend_padding={'top': 0,'bottom': 2/3,'left': 1/6,'right': 1/2},
-        font_size=28, typeface="SourceCodePro-Medium.ttf",
+        font_size=28, typeface="FreeMono.ttf",
         tile_scale=1.5):
 
         self.state = state

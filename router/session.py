@@ -37,13 +37,13 @@ class SessionManager():
     async def remove_session(self, channel, primary, tertiary):
         session_id = SessionManager.generate_session_id(primary, tertiary)
         if self.get_session(session_id):
+            await channel.send(f"{primary.display_name} ended session between {primary.display_name} and {tertiary.display_name}")
             await self._sessions[session_id].on_complete()
             del self._sessions[session_id]
             self._players[primary.id].remove(session_id)
             # congrats you played yourself
             if primary.id != tertiary.id:
                 self._players[tertiary.id].remove(session_id)
-            await channel.send(f"{primary.display_name} ended session between {primary.display_name} and {tertiary.display_name}")
             return True
         await channel.send(f"no active session found between {primary.display_name} and {tertiary.display_name}")
         return False

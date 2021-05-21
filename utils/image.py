@@ -6,6 +6,7 @@ import requests
 import cairosvg
 
 from PIL import Image
+from utils import logger
 
 def export_replay(filepath, filename, hold_seconds=1):
     ffmpeg.input(
