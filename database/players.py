@@ -19,7 +19,7 @@ class PlayersTable():
     def insert_player(self, player_id):
         c = self.conn.cursor()
         data = (str(player_id), None, None)
-        c.execute('INSERT INTO players VALUES(?, ?, ?) ON CONFLICT DO NOTHING', data)
+        c.execute('INSERT OR IGNORE INTO players VALUES(?, ?, ?)', data)
         self.conn.commit()
 
     def remove_player(self, player_id):

@@ -6,7 +6,8 @@ from utils.image import get_emoji_svg
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-BACKGROUND_PATH = "games/go/assets/kaya.jpg"
+BACKGROUND_PATH = "games/go/assets/rasters/kaya.jpg"
+FONT_PATH = "games/go/assets/fonts/Ubuntu_Mono/UbuntuMono-Regular.ttf"
 
 class GobanRenderer():
     def __init__(self, state, config={}):
@@ -24,8 +25,8 @@ class GobanRenderer():
 
 class GameStateRenderer():
     def __init__(self, state, x_grid=9, y_grid=9, width=490, height=490, line_width=2,
-        legend_margin_x=.92, legend_margin_y=.92, legend_padding={'top': 0,'bottom': 2/3,'left': 1/6,'right': 1/2},
-        font_size=28, typeface="SourceCodePro-Medium.ttf",
+        legend_margin_x=.92, legend_margin_y=.82, legend_padding={'top': 0,'bottom': 2/3,'left': 1/6,'right': 1/2},
+        font_size=28, typeface=FONT_PATH,
         tile_scale=1.5):
 
         self.state = state

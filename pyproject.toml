@@ -1,0 +1,14 @@
+[tool]
+[tool.poetry]
+name = "goboto"
+version = "0.1.0"
+description = "play go in discord!"
+authors = ["phi"]
+[tool.poetry.dependencies]
+boto3 = "^1.17.0"
+cairosvg = "^2.5.0"
+"discord.py" = "^1.7.0"
+emoji = "^1.2.0"
+faker = "^4.1.0"
+ffmpeg-python = "^0.2.0"
+python = "^3.8"
